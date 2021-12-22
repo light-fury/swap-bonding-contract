@@ -4,7 +4,6 @@ pragma solidity ^0.8;
 import "./external/Ownable.sol";
 import "./interface/IERC20Metadata.sol";
 import "./interface/IBondingCalculator.sol";
-import "./interface/ITreasury.sol";
 import "./library/SafeMath.sol";
 import "./library/SafeERC20.sol";
 import "./library/FixedPoint.sol";
@@ -196,7 +195,7 @@ contract SwapBondDepository is Ownable {
 
         require( _maxPrice >= nativePrice, "Slippage limit: more than max price" ); // slippage protection
 
-        uint value = ITreasury( treasury ).tokenValue( principle, _amount );
+        uint value = tokenValue( principle, _amount );
         uint payout = payoutFor( value ); // payout to bonder is computed
 
         require( payout >= 10000000, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
@@ -211,12 +210,12 @@ contract SwapBondDepository is Ownable {
             approved and
             deposited into the treasury, returning (_amount - profit) SWAP
          */
-        IERC20( principle ).safeTransferFrom( msg.sender, address(this), _amount );
-        IERC20( principle ).approve( address( treasury ), _amount );
-        ITreasury( treasury ).deposit( _amount, principle, profit );
-        
+        IERC20( principle ).safeTransferFrom( msg.sender, address( treasury ), _amount );
+
+        IERC20( SWAP ).safeTransferFrom(address( treasury ), msg.sender, payout);
+
         if ( fee != 0 ) { // fee is transferred to dao 
-            IERC20( SWAP ).safeTransfer( DAO, fee ); 
+            IERC20( SWAP ).safeTransferFrom(address( treasury ), DAO, fee);
         }
         
         // total debt is increased
@@ -355,6 +354,16 @@ contract SwapBondDepository is Ownable {
         } else if ( terms.minimumPrice != 0 ) {
             terms.minimumPrice = 0;
         }
+    }
+
+    /**
+     * @notice returns SWAP valuation of asset
+     * @param _token address
+     * @param _amount uint256
+     * @return value_ uint256
+     */
+    function tokenValue(address _token, uint256 _amount) internal view returns (uint256 value_) {
+        value_ = IBondingCalculator( bondCalculator ).valuation(_token, _amount);
     }
 
     /**
