@@ -40,7 +40,7 @@ contract BondingCalculator is IBondingCalculator {
         _value = totalValue.mul( FixedPoint.fraction( amount_, totalSupply ).decode112with18() ).div( 1e18 );
     }
 
-    function markdown( address _pair ) external view returns ( uint ) {
+    function markdown( address _pair ) external view override returns ( uint ) {
         ( uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
 
         uint reserve;

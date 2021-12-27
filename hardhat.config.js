@@ -2,6 +2,7 @@ require("@nomiclabs/hardhat-waffle");
 require("@nomiclabs/hardhat-truffle5");
 require("@nomiclabs/hardhat-etherscan");
 require("@nomiclabs/hardhat-ethers");
+require("@openzeppelin/hardhat-upgrades");
 require("solidity-coverage");
 require("hardhat-deploy");
 require("hardhat-gas-reporter");
@@ -22,11 +23,62 @@ module.exports = {
           },
         },
       },
+      {
+        version: "0.6.12",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+      {
+        version: "0.5.0",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
     ],
   },
   networks: {
     localhost: {
       url: "http://127.0.0.1:8545",
+    },
+    hardhat: {
+      forking: {
+        url: `https://eth-kovan.alchemyapi.io/v2/${process.env.ALCHEMY_KOVAN_KEY}`,
+      },
+      accounts: {
+        mnemonic: process.env.MNEMONIC,
+      },
+      allowUnlimitedContractSize: true,
+      hardfork: "london",
+      gasPrice: "auto",
+    },
+    rinkeby: {
+      url: `https://rinkeby.infura.io/v3/${process.env.INFURA_KEY}`,
+      accounts: {
+        mnemonic: process.env.MNEMONIC,
+      },
+      hardfork: "london",
+      gasPrice: "auto",
+    },
+    mainnet: {
+      url: `https://mainnet.infura.io/v3/${process.env.INFURA_KEY}`,
+      accounts: {
+        mnemonic: process.env.MNEMONIC,
+      },
+      hardfork: "london",
+      gasPrice: "auto",
+    },
+    matic: {
+      url: "https://keen-bell:chaste-gulf-chunk-aloe-deuce-copied@nd-654-291-805.p2pify.com/",
+      accounts: {
+        mnemonic: process.env.MNEMONIC,
+      },
     },
   },
   contractSizer: {

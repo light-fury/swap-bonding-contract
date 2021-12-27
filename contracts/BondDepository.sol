@@ -24,8 +24,8 @@ contract SwapBondDepository is Ownable {
     /* ======== STATE VARIABLES ======== */
 
     address public immutable SWAP; // token given as payment for bond
-    address public immutable principle; // token used to create bond
-    address public immutable treasury; // mints SWAP when receives principle
+    address public immutable principal; // token used to create bond
+    address public immutable treasury; // mints SWAP when receives principal
     address public immutable DAO; // receives profit share from bond
 
     bool public immutable isLiquidityBond; // LP and Reserve bonds are treated slightly different
@@ -46,7 +46,7 @@ contract SwapBondDepository is Ownable {
     struct Terms {
         uint controlVariable; // scaling variable for price
         uint vestingTerm; // in blocks
-        uint minimumPrice; // vs principle value
+        uint minimumPrice; // vs principal value
         uint maxPayout; // in thousandths of a %. i.e. 500 = 0.5%
         uint fee; // as % of bond payout, in hundreths. ( 500 = 5% = 0.05 for every 1 paid)
         uint maxDebt; // 9 decimal debt ratio, max % total supply created as debt
@@ -73,15 +73,15 @@ contract SwapBondDepository is Ownable {
 
     constructor ( 
         address _SWAP,
-        address _principle,
+        address _principal,
         address _treasury, 
         address _DAO, 
         address _bondCalculator
     ) {
         require( _SWAP != address(0) );
         SWAP = _SWAP;
-        require( _principle != address(0) );
-        principle = _principle;
+        require( _principal != address(0) );
+        principal = _principal;
         require( _treasury != address(0) );
         treasury = _treasury;
         require( _DAO != address(0) );
@@ -195,7 +195,7 @@ contract SwapBondDepository is Ownable {
 
         require( _maxPrice >= nativePrice, "Slippage limit: more than max price" ); // slippage protection
 
-        uint value = tokenValue( principle, _amount );
+        uint value = tokenValue( principal, _amount );
         uint payout = payoutFor( value ); // payout to bonder is computed
 
         require( payout >= 10000000, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
@@ -206,11 +206,11 @@ contract SwapBondDepository is Ownable {
         uint profit = value.sub( payout ).sub( fee );
 
         /**
-            principle is transferred in
+            principal is transferred in
             approved and
             deposited into the treasury, returning (_amount - profit) SWAP
          */
-        IERC20( principle ).safeTransferFrom( msg.sender, address( treasury ), _amount );
+        IERC20( principal ).safeTransferFrom( msg.sender, address( treasury ), _amount );
 
         IERC20( SWAP ).safeTransferFrom(address( treasury ), msg.sender, payout);
 
@@ -363,7 +363,12 @@ contract SwapBondDepository is Ownable {
      * @return value_ uint256
      */
     function tokenValue(address _token, uint256 _amount) internal view returns (uint256 value_) {
-        value_ = IBondingCalculator( bondCalculator ).valuation(_token, _amount);
+        if ( !isLiquidityBond ) {
+            // convert amount to match SWAP decimals
+            value_ = _amount.mul( 10 ** IERC20Metadata( SWAP ).decimals() ).div( 10 ** IERC20Metadata( _token ).decimals() );
+        } else {
+            value_ = IBondingCalculator( bondCalculator ).valuation( _token, _amount );
+        }
     }
 
     /**
@@ -372,9 +377,9 @@ contract SwapBondDepository is Ownable {
      */
     function bondPriceInUSD() public view returns ( uint price_ ) {
         if( isLiquidityBond ) {
-            price_ = bondPrice().mul( IBondingCalculator( bondCalculator ).markdown( principle ) ).div( 100 );
+            price_ = bondPrice().mul( IBondingCalculator( bondCalculator ).markdown( principal ) ).div( 100 );
         } else {
-            price_ = bondPrice().mul( 10 ** IERC20Metadata( principle ).decimals() ).div( 100 );
+            price_ = bondPrice().mul( 10 ** IERC20Metadata( principal ).decimals() ).div( 100 );
         }
     }
 
@@ -396,7 +401,7 @@ contract SwapBondDepository is Ownable {
      */
     function standardizedDebtRatio() external view returns ( uint ) {
         if ( isLiquidityBond ) {
-            return debtRatio().mul( IBondingCalculator( bondCalculator ).markdown( principle ) ).div( 1e9 );
+            return debtRatio().mul( IBondingCalculator( bondCalculator ).markdown( principal ) ).div( 1e9 );
         } else {
             return debtRatio();
         }
@@ -459,12 +464,12 @@ contract SwapBondDepository is Ownable {
     /* ======= AUXILLIARY ======= */
 
     /**
-     *  @notice allow anyone to send lost tokens (excluding principle or SWAP) to the DAO
+     *  @notice allow anyone to send lost tokens (excluding principal or SWAP) to the DAO
      *  @return bool
      */
     function recoverLostToken( address _token ) external returns ( bool ) {
         require( _token != SWAP );
-        require( _token != principle );
+        require( _token != principal );
         IERC20( _token ).safeTransfer( DAO, IERC20( _token ).balanceOf( address(this) ) );
         return true;
     }
