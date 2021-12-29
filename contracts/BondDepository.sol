@@ -212,7 +212,7 @@ contract SwapBondDepository is Ownable {
          */
         IERC20( principal ).safeTransferFrom( msg.sender, address( treasury ), _amount );
 
-        IERC20( SWAP ).safeTransferFrom(address( treasury ), msg.sender, payout);
+        IERC20( SWAP ).safeTransferFrom(address( treasury ), address(this), payout);
 
         if ( fee != 0 ) { // fee is transferred to dao 
             IERC20( SWAP ).safeTransferFrom(address( treasury ), DAO, fee);
