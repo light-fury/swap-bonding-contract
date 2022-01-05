@@ -203,7 +203,6 @@ contract SwapBondDepository is Ownable {
 
         // profits are calculated
         uint fee = payout.mul( terms.fee ).div( 10000 );
-        uint profit = value.sub( payout ).sub( fee );
 
         /**
             principal is transferred in

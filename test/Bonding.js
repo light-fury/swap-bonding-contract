@@ -18,9 +18,8 @@ describe("Bonding", function () {
     console.log(dao.address);
 
     const MockUSDT = await ethers.getContractFactory("MockUSDT");
-    usdtToken = await MockUSDT.attach(
-      "0x13512979ADE267AB5100878E2e0f485B568328a4" // The deployed contract address
-    );
+    usdtToken = await MockUSDT.connect(alice).deploy();
+    await usdtToken.deployed();
 
     const SwapToken = await ethers.getContractFactory("SwapToken");
     swapToken = await upgrades.deployProxy(SwapToken, [
@@ -42,7 +41,7 @@ describe("Bonding", function () {
     );
     bondDepository = await BondDepository.deploy(
       swapToken.address,
-      "0x13512979ade267ab5100878e2e0f485b568328a4",
+      usdtToken.address,
       owner.address,
       dao.address,
       "0x0000000000000000000000000000000000000000"
@@ -51,13 +50,13 @@ describe("Bonding", function () {
     await bondDepository.deployed();
 
     await bondDepository.initializeBondTerms(
-      300,
+      480,
       33110,
-      26000,
-      50,
+      0,
+      5,
       10000,
-      ethers.utils.parseUnits("600000000", 6),
-      ethers.utils.parseUnits("450000000", 6)
+      ethers.utils.parseUnits("2", 16),
+      0
     );
     await swapToken
       .connect(owner)
@@ -66,16 +65,17 @@ describe("Bonding", function () {
         ethers.utils.parseUnits("100000000", 18)
       );
     await usdtToken
-      .connect(owner)
-      .transfer(alice.address, ethers.utils.parseUnits("400000000", 6));
-    await usdtToken
       .connect(alice)
-      .approve(bondDepository.address, ethers.utils.parseUnits("400000000", 6));
+      .approve(bondDepository.address, ethers.utils.parseUnits("100000", 18));
   });
   it("Deposit & Redeem", async function () {
+    const bondSwapAmt1 = await swapToken
+      .connect(alice)
+      .balanceOf(bondDepository.address);
+    console.log(bondSwapAmt1);
     await bondDepository
       .connect(alice)
-      .deposit(ethers.utils.parseUnits("10000", 6), 28630, alice.address);
+      .deposit(ethers.utils.parseUnits("1000", 18), 31529, alice.address);
 
     const swapAmt = await swapToken.connect(alice).balanceOf(alice.address);
     const usdtAmt = await usdtToken.connect(alice).balanceOf(alice.address);

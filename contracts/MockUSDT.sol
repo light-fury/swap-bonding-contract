@@ -440,7 +440,11 @@ contract MintableERC20 is ERC20 {
 
 contract MockUSDT is MintableERC20 {
 
-    uint256 public decimals = 6;
+    uint256 public decimals = 18;
     string public symbol = "USDT";
     string public name = "USDT Coin";
+
+    constructor() public {
+        _mint(msg.sender, 1000000 * (10 ** uint256(decimals)));
+    }
 }
