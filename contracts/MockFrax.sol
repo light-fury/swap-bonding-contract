@@ -434,15 +434,15 @@ contract MintableERC20 is ERC20 {
     }
 }
 
-// File: contracts/mocks/tokens/MockUSDT.sol
+// File: contracts/mocks/tokens/MockFrax.sol
 
 
 
-contract MockUSDT is MintableERC20 {
+contract MockFrax is MintableERC20 {
 
     uint256 public decimals = 18;
-    string public symbol = "USDT";
-    string public name = "USDT Coin";
+    string public symbol = "FRAX";
+    string public name = "Frax";
 
     constructor() public {
         _mint(msg.sender, 1000000 * (10 ** uint256(decimals)));
