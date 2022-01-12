@@ -10,16 +10,16 @@ describe("Bonding", function () {
   let bondingCalculator;
   let bondDepository;
   let swapToken;
-  let fraxToken;
+  let tetherToken;
   before(async function () {
     [owner, alice, dao] = await ethers.getSigners();
     console.log(owner.address);
     console.log(alice.address);
     console.log(dao.address);
 
-    const MockFrax = await ethers.getContractFactory("MockFrax");
-    fraxToken = await MockFrax.connect(alice).deploy();
-    await fraxToken.deployed();
+    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    tetherToken = await MockUSDT.connect(alice).deploy();
+    await tetherToken.deployed();
 
     const SwapToken = await ethers.getContractFactory("SwapToken");
     swapToken = await upgrades.deployProxy(SwapToken, [
@@ -41,7 +41,7 @@ describe("Bonding", function () {
     );
     bondDepository = await BondDepository.deploy(
       swapToken.address,
-      fraxToken.address,
+      tetherToken.address,
       owner.address,
       dao.address,
       "0x0000000000000000000000000000000000000000"
@@ -64,7 +64,7 @@ describe("Bonding", function () {
         bondDepository.address,
         ethers.utils.parseUnits("100000000", 18)
       );
-    await fraxToken
+    await tetherToken
       .connect(alice)
       .approve(bondDepository.address, ethers.utils.parseUnits("100000", 18));
   });
@@ -78,14 +78,14 @@ describe("Bonding", function () {
       .deposit(ethers.utils.parseUnits("1000", 18), 31529, alice.address);
 
     const swapAmt = await swapToken.connect(alice).balanceOf(alice.address);
-    const usdtAmt = await fraxToken.connect(alice).balanceOf(alice.address);
+    const usdtAmt = await tetherToken.connect(alice).balanceOf(alice.address);
     console.log(swapAmt);
     console.log(usdtAmt);
 
     const bondSwapAmt = await swapToken
       .connect(alice)
       .balanceOf(bondDepository.address);
-    const bondUsdtAmt = await fraxToken
+    const bondUsdtAmt = await tetherToken
       .connect(alice)
       .balanceOf(bondDepository.address);
     console.log(bondSwapAmt);

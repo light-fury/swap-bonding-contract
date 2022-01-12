@@ -35,6 +35,7 @@ contract SwapBondDepository is Ownable {
     Adjust public adjustment; // stores adjustment to BCV data
 
     mapping( address => Bond ) public bondInfo; // stores bond information for depositors
+    mapping( address => bool ) public whitelist; // stores whitelist for minters
 
     uint public totalDebt; // total value of outstanding bonds; used for pricing
     uint public lastDecay; // reference block for debt decay
@@ -89,6 +90,36 @@ contract SwapBondDepository is Ownable {
         // bondCalculator should be address(0) if not LP bond
         bondCalculator = _bondCalculator;
         isLiquidityBond = ( _bondCalculator != address(0) );
+        whitelist[_msgSender()] = true;
+    }
+
+    /**
+     *  @notice whitelist modifier
+     */
+    modifier onlyWhitelisted() {
+        require(whitelist[_msgSender()], "Not Whitelisted");
+        _;
+    }
+
+    /**
+     *  @notice update whitelist
+     *  @param _target address
+     *  @param _value bool
+     */
+    function updateWhitelist(address _target, bool _value) external onlyOwner {
+        whitelist[_target] = _value;
+    }
+
+    /**
+     *  @notice update whitelistfor multiple addresses
+     *  @param _target address[]
+     *  @param _value bool[]
+     */
+    function updateBatchWhitelist(address[] calldata _target, bool[] calldata _value) external onlyOwner {
+        require(_target.length == _value.length, "Invalid request");
+        for (uint256 index = 0; index < _target.length; index++) {
+            whitelist[_target[index]] = _value[index];
+        }
     }
 
     /**
@@ -109,7 +140,7 @@ contract SwapBondDepository is Ownable {
         uint _fee,
         uint _maxDebt,
         uint _initialDebt
-    ) external onlyOwner() {
+    ) external onlyOwner {
         require( terms.controlVariable == 0, "Bonds must be initialized from 0" );
         terms = Terms ({
             controlVariable: _controlVariable,
@@ -132,7 +163,7 @@ contract SwapBondDepository is Ownable {
      *  @param _parameter PARAMETER
      *  @param _input uint
      */
-    function setBondTerms ( PARAMETER _parameter, uint _input ) external onlyOwner() {
+    function setBondTerms ( PARAMETER _parameter, uint _input ) external onlyOwner {
         if ( _parameter == PARAMETER.VESTING ) { // 0
             require( _input >= 10000, "Vesting must be longer than 36 hours" );
             terms.vestingTerm = _input;
@@ -159,7 +190,7 @@ contract SwapBondDepository is Ownable {
         uint _increment, 
         uint _target,
         uint _buffer 
-    ) external onlyOwner() {
+    ) external onlyOwner {
         require( _increment <= terms.controlVariable.mul( 25 ).div( 1000 ), "Increment too large" );
 
         adjustment = Adjust({
@@ -184,7 +215,7 @@ contract SwapBondDepository is Ownable {
         uint _amount, 
         uint _maxPrice,
         address _depositor
-    ) external returns ( uint ) {
+    ) external onlyWhitelisted returns ( uint ) {
         require( _depositor != address(0), "Invalid address" );
 
         decayDebt();
@@ -241,7 +272,7 @@ contract SwapBondDepository is Ownable {
      *  @param _recipient address
      *  @return uint
      */ 
-    function redeem( address _recipient ) external returns ( uint ) {        
+    function redeem( address _recipient ) external onlyWhitelisted returns ( uint ) {        
         Bond memory info = bondInfo[ _recipient ];
         uint percentVested = percentVestedFor( _recipient ); // (blocks since last interaction / vesting term remaining)
 
