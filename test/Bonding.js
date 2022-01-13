@@ -17,7 +17,7 @@ describe("Bonding", function () {
     console.log(alice.address);
     console.log(dao.address);
 
-    const MockUSDT = await ethers.getContractFactory("MockUSDT");
+    const MockUSDT = await ethers.getContractFactory("TetherToken");
     tetherToken = await MockUSDT.connect(alice).deploy();
     await tetherToken.deployed();
 

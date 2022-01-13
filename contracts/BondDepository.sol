@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8;
 
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
 import "./external/Ownable.sol";
 import "./interface/IERC20Metadata.sol";
 import "./interface/IBondingCalculator.sol";
@@ -8,7 +10,7 @@ import "./library/SafeMath.sol";
 import "./library/SafeERC20.sol";
 import "./library/FixedPoint.sol";
 
-contract SwapBondDepository is Ownable {
+contract SwapBondDepository is Ownable, ReentrancyGuard {
 
     using FixedPoint for *;
     using SafeERC20 for IERC20;
@@ -30,35 +32,37 @@ contract SwapBondDepository is Ownable {
 
     bool public immutable isLiquidityBond; // LP and Reserve bonds are treated slightly different
     address public immutable bondCalculator; // calculates value of LP tokens
+    address private pairAddress;
 
     Terms public terms; // stores terms for new bonds
     Adjust public adjustment; // stores adjustment to BCV data
 
-    mapping( address => Bond ) public bondInfo; // stores bond information for depositors
+    mapping( uint => mapping(address => Bond)) public bondInfo; // stores bond information for depositors
     mapping( address => bool ) public whitelist; // stores whitelist for minters
 
     uint public totalDebt; // total value of outstanding bonds; used for pricing
-    uint public lastDecay; // reference block for debt decay
+    uint public lastDecay; // reference timestamp for debt decay
+    uint public constant CONTROL_VARIABLE_PRECISION = 10_000;
 
 
     /* ======== STRUCTS ======== */
 
     // Info for creating new bonds
     struct Terms {
-        uint controlVariable; // scaling variable for price
-        uint vestingTerm; // in blocks
+        uint controlVariable; // scaling variable for price, in hundreths
+        uint[] vestingTerm; // in time
         uint minimumPrice; // vs principal value
         uint maxPayout; // in thousandths of a %. i.e. 500 = 0.5%
-        uint fee; // as % of bond payout, in hundreths. ( 500 = 5% = 0.05 for every 1 paid)
+        uint[] fee; // as % of bond payout, in hundreths. ( 500 = 5% = 0.05 for every 1 paid)
         uint maxDebt; // 9 decimal debt ratio, max % total supply created as debt
     }
 
     // Info for bond holder
     struct Bond {
         uint payout; // SWAP remaining to be paid
-        uint vesting; // Blocks left to vest
-        uint lastBlock; // Last interaction
-        uint pricePaid; // In DAI, for front end viewing
+        uint vesting; // Time left to vest
+        uint lastTimestamp; // Last interaction
+        uint pricePaid; // In USDT, for front end viewing
     }
 
     // Info for incremental adjustments to control variable 
@@ -67,7 +71,7 @@ contract SwapBondDepository is Ownable {
         uint rate; // increment
         uint target; // BCV when adjustment finished
         uint buffer; // minimum length (in blocks) between adjustments
-        uint lastBlock; // block when last adjustment made
+        uint lastTimestamp; // block when last adjustment made
     }
 
     /* ======== INITIALIZATION ======== */
@@ -77,7 +81,8 @@ contract SwapBondDepository is Ownable {
         address _principal,
         address _treasury, 
         address _DAO, 
-        address _bondCalculator
+        address _bondCalculator,
+        address _pairAddress
     ) {
         require( _SWAP != address(0) );
         SWAP = _SWAP;
@@ -89,6 +94,7 @@ contract SwapBondDepository is Ownable {
         DAO = _DAO;
         // bondCalculator should be address(0) if not LP bond
         bondCalculator = _bondCalculator;
+        pairAddress = _pairAddress;
         isLiquidityBond = ( _bondCalculator != address(0) );
         whitelist[_msgSender()] = true;
     }
@@ -108,6 +114,14 @@ contract SwapBondDepository is Ownable {
      */
     function updateWhitelist(address _target, bool _value) external onlyOwner {
         whitelist[_target] = _value;
+    }
+
+    /**
+     *  @notice update whitelist
+     *  @param _pair address
+     */
+    function updatePairAddress(address _pair) external onlyOwner {
+        pairAddress = _pair;
     }
 
     /**
@@ -134,10 +148,10 @@ contract SwapBondDepository is Ownable {
      */
     function initializeBondTerms( 
         uint _controlVariable, 
-        uint _vestingTerm,
+        uint[] calldata _vestingTerm,
         uint _minimumPrice,
         uint _maxPayout,
-        uint _fee,
+        uint[] calldata _fee,
         uint _maxDebt,
         uint _initialDebt
     ) external onlyOwner {
@@ -151,7 +165,7 @@ contract SwapBondDepository is Ownable {
             maxDebt: _maxDebt
         });
         totalDebt = _initialDebt;
-        lastDecay = block.number;
+        lastDecay = block.timestamp;
     }
 
     
@@ -163,16 +177,16 @@ contract SwapBondDepository is Ownable {
      *  @param _parameter PARAMETER
      *  @param _input uint
      */
-    function setBondTerms ( PARAMETER _parameter, uint _input ) external onlyOwner {
+    function setBondTerms ( PARAMETER _parameter, uint _input, uint _term ) external onlyOwner {
         if ( _parameter == PARAMETER.VESTING ) { // 0
-            require( _input >= 10000, "Vesting must be longer than 36 hours" );
-            terms.vestingTerm = _input;
+            require( _input >= 3 days, "Vesting must be longer than 3 days" );
+            terms.vestingTerm[_term] = _input;
         } else if ( _parameter == PARAMETER.PAYOUT ) { // 1
             require( _input <= 1000, "Payout cannot be above 1 percent" );
             terms.maxPayout = _input;
         } else if ( _parameter == PARAMETER.FEE ) { // 2
             require( _input <= 10000, "DAO fee cannot exceed payout" );
-            terms.fee = _input;
+            terms.fee[_term] = _input;
         } else if ( _parameter == PARAMETER.DEBT ) { // 3
             terms.maxDebt = _input;
         }
@@ -198,7 +212,7 @@ contract SwapBondDepository is Ownable {
             rate: _increment,
             target: _target,
             buffer: _buffer,
-            lastBlock: block.number
+            lastTimestamp: block.timestamp
         });
     }
     
@@ -214,11 +228,11 @@ contract SwapBondDepository is Ownable {
     function deposit( 
         uint _amount, 
         uint _maxPrice,
-        address _depositor
-    ) external onlyWhitelisted returns ( uint ) {
+        address _depositor,
+        uint _term
+    ) external onlyWhitelisted nonReentrant returns ( uint ) {
         require( _depositor != address(0), "Invalid address" );
 
-        decayDebt();
         require( totalDebt <= terms.maxDebt, "Max capacity reached" );
         
         uint priceInUSD = bondPriceInUSD(); // Stored in bond info
@@ -229,11 +243,11 @@ contract SwapBondDepository is Ownable {
         uint value = tokenValue( principal, _amount );
         uint payout = payoutFor( value ); // payout to bonder is computed
 
-        require( payout >= 10000000, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
+        require( payout >= 1e16, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
         require( payout <= maxPayout(), "Bond too large"); // size protection because there is no slippage
 
         // profits are calculated
-        uint fee = payout.mul( terms.fee ).div( 10000 );
+        uint fee = payout.mul( terms.fee[_term] ).div( 10000 );
 
         /**
             principal is transferred in
@@ -242,7 +256,7 @@ contract SwapBondDepository is Ownable {
          */
         IERC20( principal ).safeTransferFrom( msg.sender, address( treasury ), _amount );
 
-        IERC20( SWAP ).safeTransferFrom(address( treasury ), address(this), payout);
+        IERC20( SWAP ).safeTransferFrom(address( treasury ), address(this), payout - fee);
 
         if ( fee != 0 ) { // fee is transferred to dao 
             IERC20( SWAP ).safeTransferFrom(address( treasury ), DAO, fee);
@@ -252,15 +266,15 @@ contract SwapBondDepository is Ownable {
         totalDebt = totalDebt.add( value ); 
                 
         // depositor info is stored
-        bondInfo[ _depositor ] = Bond({ 
-            payout: bondInfo[ _depositor ].payout.add( payout ),
-            vesting: terms.vestingTerm,
-            lastBlock: block.number,
+        bondInfo[_term][ _depositor ] = Bond({ 
+            payout: bondInfo[_term][ _depositor ].payout.add( payout ),
+            vesting: terms.vestingTerm[_term],
+            lastTimestamp: block.timestamp,
             pricePaid: priceInUSD
         });
 
         // indexed events are emitted
-        emit BondCreated( _amount, payout, block.number.add( terms.vestingTerm ), priceInUSD );
+        emit BondCreated( _amount, payout, block.timestamp.add( terms.vestingTerm[_term] ), priceInUSD );
         emit BondPriceChanged( bondPriceInUSD(), _bondPrice(), debtRatio() );
 
         adjust(); // control variable is adjusted
@@ -272,28 +286,28 @@ contract SwapBondDepository is Ownable {
      *  @param _recipient address
      *  @return uint
      */ 
-    function redeem( address _recipient ) external onlyWhitelisted returns ( uint ) {        
-        Bond memory info = bondInfo[ _recipient ];
-        uint percentVested = percentVestedFor( _recipient ); // (blocks since last interaction / vesting term remaining)
+    function redeem( address _recipient, uint _term ) external onlyWhitelisted nonReentrant returns ( uint ) {        
+        Bond memory info = bondInfo[_term][ _recipient ];
+        uint percentVested = percentVestedFor( _recipient, _term ); // (blocks since last interaction / vesting term remaining)
 
-        if ( percentVested >= 10000 ) { // if fully vested
-            delete bondInfo[ _recipient ]; // delete user info
+        if ( percentVested >= 1e9 ) { // if fully vested
+            delete bondInfo[_term][ _recipient ]; // delete user info
             emit BondRedeemed( _recipient, info.payout, 0 ); // emit bond data
             return sendTo( _recipient, info.payout ); // pay user everything due
 
         } else { // if unfinished
             // calculate payout vested
-            uint payout = info.payout.mul( percentVested ).div( 10000 );
+            uint payout = info.payout.mul( percentVested ).div( 1e9 );
 
             // store updated deposit info
-            bondInfo[ _recipient ] = Bond({
+            bondInfo[_term][ _recipient ] = Bond({
                 payout: info.payout.sub( payout ),
-                vesting: info.vesting.sub( block.number.sub( info.lastBlock ) ),
-                lastBlock: block.number,
+                vesting: info.vesting.sub( block.timestamp.sub( info.lastTimestamp ) ),
+                lastTimestamp: block.timestamp,
                 pricePaid: info.pricePaid
             });
 
-            emit BondRedeemed( _recipient, payout, bondInfo[ _recipient ].payout );
+            emit BondRedeemed( _recipient, payout, bondInfo[_term][ _recipient ].payout );
             return sendTo( _recipient, payout );
         }
     }
@@ -315,8 +329,8 @@ contract SwapBondDepository is Ownable {
      *  @notice makes incremental adjustment to control variable
      */
     function adjust() internal {
-        uint blockCanAdjust = adjustment.lastBlock.add( adjustment.buffer );
-        if( adjustment.rate != 0 && block.number >= blockCanAdjust ) {
+        uint blockCanAdjust = adjustment.lastTimestamp.add( adjustment.buffer );
+        if( adjustment.rate != 0 && block.timestamp >= blockCanAdjust ) {
             uint initial = terms.controlVariable;
             if ( adjustment.add ) {
                 terms.controlVariable = terms.controlVariable.add( adjustment.rate );
@@ -329,7 +343,7 @@ contract SwapBondDepository is Ownable {
                     adjustment.rate = 0;
                 }
             }
-            adjustment.lastBlock = block.number;
+            adjustment.lastTimestamp = block.timestamp;
             emit ControlVariableAdjustment( initial, terms.controlVariable, adjustment.rate, adjustment.add );
         }
     }
@@ -338,8 +352,8 @@ contract SwapBondDepository is Ownable {
      *  @notice reduce total debt
      */
     function decayDebt() internal {
-        totalDebt = totalDebt.sub( debtDecay() );
-        lastDecay = block.number;
+        totalDebt = totalDebt;
+        lastDecay = block.timestamp;
     }
 
 
@@ -359,15 +373,17 @@ contract SwapBondDepository is Ownable {
      *  @return uint
      */
     function payoutFor( uint _value ) public view returns ( uint ) {
-        return FixedPoint.fraction( _value, bondPrice() ).decode112with18().div( 1e16 );
+        return CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(_value).div(CONTROL_VARIABLE_PRECISION);
     }
 
     /**
      *  @notice calculate current bond premium
      *  @return price_ uint
      */
-    function bondPrice() public view returns ( uint price_ ) {        
-        price_ = terms.controlVariable.mul( debtRatio() ).add( 1000000000 ).div( 1e7 );
+    function bondPrice() public view returns ( uint price_ ) {      
+        uint bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddress );
+        price_ = CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(bondTokenPrice).div(CONTROL_VARIABLE_PRECISION);
+
         if ( price_ < terms.minimumPrice ) {
             price_ = terms.minimumPrice;
         }
@@ -378,7 +394,7 @@ contract SwapBondDepository is Ownable {
      *  @return price_ uint
      */
     function _bondPrice() internal returns ( uint price_ ) {
-        price_ = terms.controlVariable.mul( debtRatio() ).add( 1000000000 ).div( 1e7 );
+        price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddress );
         if ( price_ < terms.minimumPrice ) {
             price_ = terms.minimumPrice;        
         } else if ( terms.minimumPrice != 0 ) {
@@ -397,7 +413,7 @@ contract SwapBondDepository is Ownable {
             // convert amount to match SWAP decimals
             value_ = _amount.mul( 10 ** IERC20Metadata( SWAP ).decimals() ).div( 10 ** IERC20Metadata( _token ).decimals() );
         } else {
-            value_ = IBondingCalculator( bondCalculator ).valuation( _token, _amount );
+            value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddress, _amount );
         }
     }
 
@@ -407,7 +423,7 @@ contract SwapBondDepository is Ownable {
      */
     function bondPriceInUSD() public view returns ( uint price_ ) {
         if( isLiquidityBond ) {
-            price_ = bondPrice().mul( IBondingCalculator( bondCalculator ).markdown( principal ) ).div( 100 );
+            price_ = bondPrice();
         } else {
             price_ = bondPrice().mul( 10 ** IERC20Metadata( principal ).decimals() ).div( 100 );
         }
@@ -442,19 +458,7 @@ contract SwapBondDepository is Ownable {
      *  @return uint
      */
     function currentDebt() public view returns ( uint ) {
-        return totalDebt.sub( debtDecay() );
-    }
-
-    /**
-     *  @notice amount to decay total debt by
-     *  @return decay_ uint
-     */
-    function debtDecay() public view returns ( uint decay_ ) {
-        uint blocksSinceLast = block.number.sub( lastDecay );
-        decay_ = totalDebt.mul( blocksSinceLast ).div( terms.vestingTerm );
-        if ( decay_ > totalDebt ) {
-            decay_ = totalDebt;
-        }
+        return totalDebt;
     }
 
     /**
@@ -462,13 +466,13 @@ contract SwapBondDepository is Ownable {
      *  @param _depositor address
      *  @return percentVested_ uint
      */
-    function percentVestedFor( address _depositor ) public view returns ( uint percentVested_ ) {
-        Bond memory bond = bondInfo[ _depositor ];
-        uint blocksSinceLast = block.number.sub( bond.lastBlock );
+    function percentVestedFor( address _depositor, uint _term ) public view returns ( uint percentVested_ ) {
+        Bond memory bond = bondInfo[_term][ _depositor ];
+        uint blocksSinceLast = block.timestamp.sub( bond.lastTimestamp );
         uint vesting = bond.vesting;
 
         if ( vesting > 0 ) {
-            percentVested_ = blocksSinceLast.mul( 10000 ).div( vesting );
+            percentVested_ = blocksSinceLast.mul( 1e9 ).div( vesting );
         } else {
             percentVested_ = 0;
         }
@@ -479,14 +483,14 @@ contract SwapBondDepository is Ownable {
      *  @param _depositor address
      *  @return pendingPayout_ uint
      */
-    function pendingPayoutFor( address _depositor ) external view returns ( uint pendingPayout_ ) {
-        uint percentVested = percentVestedFor( _depositor );
-        uint payout = bondInfo[ _depositor ].payout;
+    function pendingPayoutFor( address _depositor, uint _term ) external view returns ( uint pendingPayout_ ) {
+        uint percentVested = percentVestedFor( _depositor, _term );
+        uint payout = bondInfo[_term][ _depositor ].payout;
 
-        if ( percentVested >= 10000 ) {
+        if ( percentVested >= 1e9 ) {
             pendingPayout_ = payout;
         } else {
-            pendingPayout_ = payout.mul( percentVested ).div( 10000 );
+            pendingPayout_ = payout.mul( percentVested ).div( 1e9 );
         }
     }
 

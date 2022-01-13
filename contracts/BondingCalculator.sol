@@ -29,6 +29,38 @@ contract BondingCalculator is IBondingCalculator {
         k_ = reserve0.mul(reserve1).div( 10 ** decimals );
     }
 
+    function getBondTokenPrice( address _pair ) external view override returns ( uint _value ) {
+        (uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
+
+        if ( IUniswapV2Pair( _pair ).token0() == SWAP ) {
+            uint token0 = IERC20Metadata( IUniswapV2Pair( _pair ).token0() ).decimals();
+            _value = reserve1.mul(10 ** token0).div(reserve0);
+        } else {
+            uint token1 = IERC20Metadata( IUniswapV2Pair( _pair ).token1() ).decimals();
+            _value = reserve0.mul(10 ** token1).div(reserve1);
+        }
+    }
+
+    function getPrincipleTokenValue( address _pair, uint amount_ ) external view override returns ( uint _value ) {
+        (uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
+
+        if ( IUniswapV2Pair( _pair ).token0() == SWAP ) {
+            _value = reserve0.mul(amount_).div(reserve1);
+        } else {
+            _value = reserve1.mul(amount_).div(reserve0);
+        }
+    }
+
+    function getBondTokenValue( address _pair, uint amount_ ) external view override returns ( uint _value ) {
+        (uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
+
+        if ( IUniswapV2Pair( _pair ).token0() == SWAP ) {
+            _value = reserve1.mul(amount_).div(reserve0);
+        } else {
+            _value = reserve0.mul(amount_).div(reserve1);
+        }
+    }
+
     function getTotalValue( address _pair ) public view returns ( uint _value ) {
         _value = getKValue( _pair ).sqrrt().mul(2);
     }
