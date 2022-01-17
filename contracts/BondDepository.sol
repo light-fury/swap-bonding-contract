@@ -108,6 +108,14 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     }
 
     /**
+     *  @notice whitelist modifier
+     */
+    modifier notContract(address _addr) {
+        require(!isContract(_addr), "Contract address");
+        _;
+    }
+
+    /**
      *  @notice update whitelist
      *  @param _target address
      *  @param _value bool
@@ -179,7 +187,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      */
     function setBondTerms ( PARAMETER _parameter, uint _input, uint _term ) external onlyOwner {
         if ( _parameter == PARAMETER.VESTING ) { // 0
-            require( _input >= 3 days, "Vesting must be longer than 3 days" );
+            require( _input >= 3, "Vesting must be longer than 3 days" );
             terms.vestingTerm[_term] = _input;
         } else if ( _parameter == PARAMETER.PAYOUT ) { // 1
             require( _input <= 1000, "Payout cannot be above 1 percent" );
@@ -230,24 +238,23 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
         uint _maxPrice,
         address _depositor,
         uint _term
-    ) external onlyWhitelisted nonReentrant returns ( uint ) {
+    ) external onlyWhitelisted nonReentrant notContract(_msgSender()) returns ( uint ) {
         require( _depositor != address(0), "Invalid address" );
 
         require( totalDebt <= terms.maxDebt, "Max capacity reached" );
         
-        uint priceInUSD = bondPriceInUSD(); // Stored in bond info
+        uint priceInUSD = bondPriceInUSD(_term); // Stored in bond info
         uint nativePrice = _bondPrice();
 
         require( _maxPrice >= nativePrice, "Slippage limit: more than max price" ); // slippage protection
 
         uint value = tokenValue( principal, _amount );
-        uint payout = payoutFor( value ); // payout to bonder is computed
 
-        require( payout >= 1e16, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
-        require( payout <= maxPayout(), "Bond too large"); // size protection because there is no slippage
+        require( value >= 1e16, "Bond too small" ); // must be > 0.01 SWAP ( underflow protection )
+        require( value <= maxPayout(), "Bond too large"); // size protection because there is no slippage
 
         // profits are calculated
-        uint fee = payout.mul( terms.fee[_term] ).div( 10000 );
+        uint payout = value.mul( nativePrice ).div( priceInUSD );
 
         /**
             principal is transferred in
@@ -256,26 +263,22 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
          */
         IERC20( principal ).safeTransferFrom( msg.sender, address( treasury ), _amount );
 
-        IERC20( SWAP ).safeTransferFrom(address( treasury ), address(this), payout - fee);
+        IERC20( SWAP ).safeTransferFrom(address( treasury ), address(this), payout);
 
-        if ( fee != 0 ) { // fee is transferred to dao 
-            IERC20( SWAP ).safeTransferFrom(address( treasury ), DAO, fee);
-        }
-        
         // total debt is increased
         totalDebt = totalDebt.add( value ); 
                 
         // depositor info is stored
         bondInfo[_term][ _depositor ] = Bond({ 
             payout: bondInfo[_term][ _depositor ].payout.add( payout ),
-            vesting: terms.vestingTerm[_term],
+            vesting: terms.vestingTerm[_term] * 1 days,
             lastTimestamp: block.timestamp,
             pricePaid: priceInUSD
         });
 
         // indexed events are emitted
-        emit BondCreated( _amount, payout, block.timestamp.add( terms.vestingTerm[_term] ), priceInUSD );
-        emit BondPriceChanged( bondPriceInUSD(), _bondPrice(), debtRatio() );
+        emit BondCreated( _amount, payout, block.timestamp.add( terms.vestingTerm[_term] * 1 days ), priceInUSD );
+        emit BondPriceChanged( bondPriceInUSD(_term), _bondPrice(), debtRatio() );
 
         adjust(); // control variable is adjusted
         return payout; 
@@ -286,7 +289,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @param _recipient address
      *  @return uint
      */ 
-    function redeem( address _recipient, uint _term ) external onlyWhitelisted nonReentrant returns ( uint ) {        
+    function redeem( address _recipient, uint _term ) external onlyWhitelisted nonReentrant notContract(_msgSender()) returns ( uint ) {        
         Bond memory info = bondInfo[_term][ _recipient ];
         uint percentVested = percentVestedFor( _recipient, _term ); // (blocks since last interaction / vesting term remaining)
 
@@ -294,21 +297,6 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
             delete bondInfo[_term][ _recipient ]; // delete user info
             emit BondRedeemed( _recipient, info.payout, 0 ); // emit bond data
             return sendTo( _recipient, info.payout ); // pay user everything due
-
-        } else { // if unfinished
-            // calculate payout vested
-            uint payout = info.payout.mul( percentVested ).div( 1e9 );
-
-            // store updated deposit info
-            bondInfo[_term][ _recipient ] = Bond({
-                payout: info.payout.sub( payout ),
-                vesting: info.vesting.sub( block.timestamp.sub( info.lastTimestamp ) ),
-                lastTimestamp: block.timestamp,
-                pricePaid: info.pricePaid
-            });
-
-            emit BondRedeemed( _recipient, payout, bondInfo[_term][ _recipient ].payout );
-            return sendTo( _recipient, payout );
         }
     }
 
@@ -360,6 +348,17 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     /* ======== VIEW FUNCTIONS ======== */
 
     /**
+     *  @notice whitelist modifier
+     */
+    function isContract(address _addr) private view returns (bool){
+        uint32 size;
+        assembly {
+            size := extcodesize(_addr)
+        }
+        return (size > 0);
+    }
+
+    /**
      *  @notice determine maximum bond size
      *  @return uint
      */
@@ -368,19 +367,10 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     }
 
     /**
-     *  @notice calculate interest due for new bond
-     *  @param _value uint
-     *  @return uint
-     */
-    function payoutFor( uint _value ) public view returns ( uint ) {
-        return CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(_value).div(CONTROL_VARIABLE_PRECISION);
-    }
-
-    /**
      *  @notice calculate current bond premium
      *  @return price_ uint
      */
-    function bondPrice() public view returns ( uint price_ ) {      
+    function bondPrice() internal view returns ( uint price_ ) {      
         uint bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddress );
         price_ = CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(bondTokenPrice).div(CONTROL_VARIABLE_PRECISION);
 
@@ -421,9 +411,9 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @notice converts bond price to DAI value
      *  @return price_ uint
      */
-    function bondPriceInUSD() public view returns ( uint price_ ) {
+    function bondPriceInUSD(uint _term) public view returns ( uint price_ ) {
         if( isLiquidityBond ) {
-            price_ = bondPrice();
+            price_ = bondPrice().mul( CONTROL_VARIABLE_PRECISION - terms.fee[_term] ).div( CONTROL_VARIABLE_PRECISION );
         } else {
             price_ = bondPrice().mul( 10 ** IERC20Metadata( principal ).decimals() ).div( 100 );
         }
@@ -471,8 +461,8 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
         uint blocksSinceLast = block.timestamp.sub( bond.lastTimestamp );
         uint vesting = bond.vesting;
 
-        if ( vesting > 0 ) {
-            percentVested_ = blocksSinceLast.mul( 1e9 ).div( vesting );
+        if ( vesting > 0 && blocksSinceLast >= vesting ) {
+            percentVested_ = 1e9;
         } else {
             percentVested_ = 0;
         }
