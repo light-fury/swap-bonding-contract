@@ -32,7 +32,8 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
 
     bool public immutable isLiquidityBond; // LP and Reserve bonds are treated slightly different
     address public immutable bondCalculator; // calculates value of LP tokens
-    address private pairAddress;
+    address private pairAddressSwap;
+    address private pairAddressPrinciple;
 
     Terms public terms; // stores terms for new bonds
     Adjust public adjustment; // stores adjustment to BCV data
@@ -82,7 +83,8 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
         address _treasury, 
         address _DAO, 
         address _bondCalculator,
-        address _pairAddress
+        address _pairAddressSwap,
+        address _pairAddressPrinciple
     ) {
         require( _SWAP != address(0) );
         SWAP = _SWAP;
@@ -94,7 +96,8 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
         DAO = _DAO;
         // bondCalculator should be address(0) if not LP bond
         bondCalculator = _bondCalculator;
-        pairAddress = _pairAddress;
+        pairAddressSwap = _pairAddressSwap;
+        pairAddressPrinciple = _pairAddressPrinciple;
         isLiquidityBond = ( _bondCalculator != address(0) );
         whitelist[_msgSender()] = true;
     }
@@ -108,7 +111,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     }
 
     /**
-     *  @notice whitelist modifier
+     *  @notice contract checker modifier
      */
     modifier notContract(address _addr) {
         require(!isContract(_addr), "Contract address");
@@ -125,11 +128,15 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     }
 
     /**
-     *  @notice update whitelist
+     *  @notice update pair address
      *  @param _pair address
      */
-    function updatePairAddress(address _pair) external onlyOwner {
-        pairAddress = _pair;
+    function updatePairAddress(address _pair, bool _swap) external onlyOwner {
+        if (_swap) {
+            pairAddressSwap = _pair;
+        } else {
+            pairAddressPrinciple = _pair;
+        }
     }
 
     /**
@@ -348,7 +355,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     /* ======== VIEW FUNCTIONS ======== */
 
     /**
-     *  @notice whitelist modifier
+     *  @notice contract checker viewer
      */
     function isContract(address _addr) private view returns (bool){
         uint32 size;
@@ -370,8 +377,13 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @notice calculate current bond premium
      *  @return price_ uint
      */
-    function bondPrice() internal view returns ( uint price_ ) {      
-        uint bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddress );
+    function bondPrice() internal view returns ( uint price_ ) {
+        uint bondTokenPrice;
+        if (pairAddressPrinciple != address(0)) {
+            bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+        } else {
+            bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+        }
         price_ = CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(bondTokenPrice).div(CONTROL_VARIABLE_PRECISION);
 
         if ( price_ < terms.minimumPrice ) {
@@ -384,7 +396,11 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @return price_ uint
      */
     function _bondPrice() internal returns ( uint price_ ) {
-        price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddress );
+        if (pairAddressPrinciple != address(0)) {
+            price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+        } else {
+            price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+        }
         if ( price_ < terms.minimumPrice ) {
             price_ = terms.minimumPrice;        
         } else if ( terms.minimumPrice != 0 ) {
@@ -403,7 +419,11 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
             // convert amount to match SWAP decimals
             value_ = _amount.mul( 10 ** IERC20Metadata( SWAP ).decimals() ).div( 10 ** IERC20Metadata( _token ).decimals() );
         } else {
-            value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddress, _amount );
+            if (pairAddressPrinciple != address(0)) {
+                value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, pairAddressPrinciple, _amount );
+            } else {
+                value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, _amount );
+            }
         }
     }
 
@@ -429,18 +449,6 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
             currentDebt().mul( 1e9 ), 
             supply
         ).decode112with18().div( 1e18 );
-    }
-
-    /**
-     *  @notice debt ratio in same terms for reserve or liquidity bonds
-     *  @return uint
-     */
-    function standardizedDebtRatio() external view returns ( uint ) {
-        if ( isLiquidityBond ) {
-            return debtRatio().mul( IBondingCalculator( bondCalculator ).markdown( principal ) ).div( 1e9 );
-        } else {
-            return debtRatio();
-        }
     }
 
     /**

@@ -112,7 +112,7 @@ module.exports = {
     enabled: true,
     coinmarketcap: process.env.COINMARKETCAP,
     currency: "USD",
-    gasPrice: 89,
+    gasPrice: 100,
   },
   preprocess: {
     eachLine: removeConsoleLog(
