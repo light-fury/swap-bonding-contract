@@ -84,7 +84,7 @@ module.exports = {
       gasPrice: "auto",
     },
     matic: {
-      url: "https://keen-bell:chaste-gulf-chunk-aloe-deuce-copied@nd-654-291-805.p2pify.com/",
+      url: `https://polygon-mainnet.infura.io/v3/${process.env.INFURA_KEY}`,
       accounts: {
         mnemonic: process.env.MNEMONIC,
       },
