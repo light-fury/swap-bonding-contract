@@ -4,7 +4,7 @@ const { ethers, upgrades } = require("hardhat");
 async function main() {
   // We get the contract to deploy
 
-  const SwapToken = await ethers.getContractFactory("SwapToken");
+  // const SwapToken = await ethers.getContractFactory("SwapToken");
   // const swapToken = await upgrades.deployProxy(SwapToken, [
   //   "TrustSwap Token",
   //   "SWAP",
@@ -12,11 +12,11 @@ async function main() {
   //   ethers.utils.parseUnits("100000000", 0),
   // ]);
   // await swapToken.deployed();
-  const swapToken = await SwapToken.attach(
-    "0x5A0593E8d540e448E10b6Bac8C1B05f272CaccB9" // The deployed contract address
-  );
+  // const swapToken = await SwapToken.attach(
+  //   "0x5A0593E8d540e448E10b6Bac8C1B05f272CaccB9" // The deployed contract address
+  // );
 
-  const MockUSDT = await ethers.getContractFactory("TetherToken");
+  // const MockUSDT = await ethers.getContractFactory("TetherToken");
   // const tetherToken = await MockUSDT.deploy(
   //   ethers.utils.parseEther("1"),
   //   "Tether USD",
@@ -24,22 +24,25 @@ async function main() {
   //   6
   // );
   // await tetherToken.deployed();
-  const tetherToken = await MockUSDT.attach(
-    "0x01a62BD0245c51760C65446A21c9EF5BB9819803" // The deployed contract address
-  );
+  // const tetherToken = await MockUSDT.attach(
+  //   "0x01a62BD0245c51760C65446A21c9EF5BB9819803" // The deployed contract address
+  // );
 
   const BondingCalculator = await ethers.getContractFactory(
     "BondingCalculator"
   );
-  const bondingCalculator = await BondingCalculator.attach(
-    "0x78062FD3d4D414f5dFcDC3f24AcEcc8966c73d67" // The deployed contract address
+  // const bondingCalculator = await BondingCalculator.attach(
+  //   "0x78062FD3d4D414f5dFcDC3f24AcEcc8966c73d67" // The deployed contract address
+  // );
+  const bondingCalculator = await BondingCalculator.deploy(
+    "0xCC4304A31d09258b0029eA7FE63d032f52e44EFe",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7"
   );
-  // const bondingCalculator = await BondingCalculator.deploy(swapToken.address);
 
   const BondDepository = await ethers.getContractFactory("SwapBondDepository");
   const bondDepository = await BondDepository.deploy(
-    swapToken.address,
-    tetherToken.address,
+    "0xCC4304A31d09258b0029eA7FE63d032f52e44EFe",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     "0xB5440E3E78aF49364C255f8507B4930e816e88fD",
     "0xB5440E3E78aF49364C255f8507B4930e816e88fD",
     // "0x0000000000000000000000000000000000000000"
@@ -59,6 +62,13 @@ async function main() {
     0
   );
 
+  await bondDepository.updateBatchWhitelist(
+    [
+      "0x906935f4b42e632137504C0ea00D43C6442272bf",
+      "0xe8A06462628b49eb70DBF114EA510EB3BbBDf559",
+    ],
+    [true, true]
+  );
   // await bondDepository.updateBatchWhitelist(
   //   [
   //     "0x7d4d795073c77873e895d9003b7853e31bec5584",
