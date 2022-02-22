@@ -3,6 +3,10 @@ pragma solidity ^0.8;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import "@uniswap/v3-core/contracts/libraries/FixedPoint96.sol";
+import "@uniswap/v3-core/contracts/libraries/FullMath.sol";
+
 import "./external/Ownable.sol";
 import "./interface/IERC20Metadata.sol";
 import "./interface/IBondingCalculator.sol";
@@ -24,7 +28,6 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     event ControlVariableAdjustment( uint initialBCV, uint newBCV, uint adjustment, bool addition );
 
     /* ======== STATE VARIABLES ======== */
-
     address public immutable SWAP; // token given as payment for bond
     address public immutable principal; // token used to create bond
     address public immutable treasury; // mints SWAP when receives principal
@@ -32,6 +35,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
 
     bool public immutable isLiquidityBond; // LP and Reserve bonds are treated slightly different
     address public immutable bondCalculator; // calculates value of LP tokens
+    uint private pairType;
     address private pairAddressSwap;
     address private pairAddressPrinciple;
 
@@ -44,7 +48,6 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     uint public totalDebt; // total value of outstanding bonds; used for pricing
     uint public lastDecay; // reference timestamp for debt decay
     uint public constant CONTROL_VARIABLE_PRECISION = 10_000;
-
 
     /* ======== STRUCTS ======== */
 
@@ -140,6 +143,14 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
     }
 
     /**
+     *  @notice update pair type
+     *  @param _type uint
+     */
+    function updatePairType(uint _type) external onlyOwner {
+        pairType = _type;
+    }
+
+    /**
      *  @notice update whitelistfor multiple addresses
      *  @param _target address[]
      *  @param _value bool[]
@@ -161,7 +172,7 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @param _maxDebt uint
      *  @param _initialDebt uint
      */
-    function initializeBondTerms( 
+    function initializeBondTerms(
         uint _controlVariable, 
         uint[] calldata _vestingTerm,
         uint _minimumPrice,
@@ -307,6 +318,10 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
         }
     }
 
+    function getPriceX96(address uniswapV3Pool) public pure returns(uint256 priceX96) {
+        (sqrtPriceX96, , , , , , ) = IUniswapV3Pool(uniswapV3Pool).slot0();
+        return FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.Q96);
+    }
 
     /* ======== INTERNAL HELPER FUNCTIONS ======== */
 
@@ -377,12 +392,20 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @notice calculate current bond premium
      *  @return price_ uint
      */
-    function bondPrice() internal view returns ( uint price_ ) {
+    function bondPrice() public view returns ( uint price_ ) {
         uint bondTokenPrice;
-        if (pairAddressPrinciple != address(0)) {
-            bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+        if (pairType == 1) {
+            if (pairAddressPrinciple != address(0)) {
+                bondTokenPrice = getPriceX96(pairAddressSwap).mul(10 ** 9).div(getPriceX96(pairAddressPrinciple));
+            } else {
+                bondTokenPrice = getPriceX96(pairAddressSwap);
+            }
         } else {
-            bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+            if (pairAddressPrinciple != address(0)) {
+                bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+            } else {
+                bondTokenPrice = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+            }
         }
         price_ = CONTROL_VARIABLE_PRECISION.sub(terms.controlVariable).mul(bondTokenPrice).div(CONTROL_VARIABLE_PRECISION);
 
@@ -396,10 +419,18 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
      *  @return price_ uint
      */
     function _bondPrice() internal returns ( uint price_ ) {
-        if (pairAddressPrinciple != address(0)) {
-            price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+        if (pairType == 1) {
+            if (pairAddressPrinciple != address(0)) {
+                price_ = getPriceX96(pairAddressSwap).mul(10 ** 9).div(getPriceX96(pairAddressPrinciple));
+            } else {
+                price_ = getPriceX96(pairAddressSwap);
+            }
         } else {
-            price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+            if (pairAddressPrinciple != address(0)) {
+                price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap, pairAddressPrinciple );
+            } else {
+                price_ = IBondingCalculator( bondCalculator ).getBondTokenPrice( pairAddressSwap );
+            }
         }
         if ( price_ < terms.minimumPrice ) {
             price_ = terms.minimumPrice;        
@@ -419,10 +450,18 @@ contract SwapBondDepository is Ownable, ReentrancyGuard {
             // convert amount to match SWAP decimals
             value_ = _amount.mul( 10 ** IERC20Metadata( SWAP ).decimals() ).div( 10 ** IERC20Metadata( _token ).decimals() );
         } else {
-            if (pairAddressPrinciple != address(0)) {
-                value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, pairAddressPrinciple, _amount );
+            if (pairType == 1) {
+                if (pairAddressPrinciple != address(0)) {
+                    value_ = getPriceX96(pairAddressSwap).mul(10 ** 9).mul(_amount).div(getPriceX96(pairAddressPrinciple));
+                } else {
+                    value_ = getPriceX96(pairAddressSwap).mul(_amount);
+                }
             } else {
-                value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, _amount );
+                if (pairAddressPrinciple != address(0)) {
+                    value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, pairAddressPrinciple, _amount );
+                } else {
+                    value_ = IBondingCalculator( bondCalculator ).getPrincipleTokenValue( pairAddressSwap, _amount );
+                }
             }
         }
     }
