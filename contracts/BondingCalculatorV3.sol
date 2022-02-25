@@ -28,73 +28,63 @@ contract BondingCalculatorV3 is IBondingCalculator {
     }
 
     function getBondTokenPrice( address _pair ) external view override returns ( uint _value ) {
-        (uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
-
-        if ( IUniswapV2Pair( _pair ).token0() == SWAP ) {
+        if ( IUniswapV3Pool( _pair ).token0() == SWAP ) {
             uint token0 = IERC20Metadata( IUniswapV2Pair( _pair ).token0() ).decimals();
-            _value = reserve1.mul(10 ** token0).div(reserve0);
+            _value = (10 ** token0).mul(FixedPoint96.Q96).div(getPriceX96(_pair));
         } else {
             uint token1 = IERC20Metadata( IUniswapV2Pair( _pair ).token1() ).decimals();
-            _value = reserve0.mul(10 ** token1).div(reserve1);
+            _value = getPriceX96(_pair).mul(10 ** token1).div(FixedPoint96.Q96);
         }
     }
 
     function getBondTokenPrice( address _pairSwap, address _pairPrinciple ) external view override returns ( uint _value ) {
-        (uint reserveS0, uint reserveS1, ) = IUniswapV2Pair( _pairSwap ).getReserves();
-        (uint reserveP0, uint reserveP1, ) = IUniswapV2Pair( _pairPrinciple ).getReserves();
-
-        if ( IUniswapV2Pair( _pairSwap ).token0() == SWAP ) {
+        if ( IUniswapV3Pool( _pairSwap ).token0() == SWAP ) {
             uint token0 = IERC20Metadata( IUniswapV2Pair( _pairSwap ).token0() ).decimals();
-            _value = reserveS1.mul(10 ** token0).div(reserveS0);
+            _value = (10 ** token0).mul(FixedPoint96.Q96).div(getPriceX96(_pairSwap));
         } else {
             uint token1 = IERC20Metadata( IUniswapV2Pair( _pairSwap ).token1() ).decimals();
-            _value = reserveS0.mul(10 ** token1).div(reserveS1);
+            _value = getPriceX96(_pairSwap).mul(10 ** token1).div(FixedPoint96.Q96);
         }
 
-        if ( IUniswapV2Pair( _pairPrinciple ).token0() == PRINCIPLE ) {
-            _value = reserveP0.mul(_value).div(reserveP1);
+        if ( IUniswapV3Pool( _pairPrinciple ).token0() == PRINCIPLE ) {
+            _value = getPriceX96(_pairPrinciple).mul(_value).div(FixedPoint96.Q96);
         } else {
-            _value = reserveP1.mul(_value).div(reserveP0);
+            _value = _value.mul(FixedPoint96.Q96).div(getPriceX96(_pairPrinciple));
         }
     }
 
     function getPrincipleTokenValue( address _pair, uint amount_ ) external view override returns ( uint _value ) {
-        (uint reserve0, uint reserve1, ) = IUniswapV2Pair( _pair ).getReserves();
-
-        if ( IUniswapV2Pair( _pair ).token0() == SWAP ) {
-            _value = reserve0.mul(amount_).div(reserve1);
+        if ( IUniswapV3Pool( _pair ).token0() == SWAP ) {
+            _value = getPriceX96(_pair).mul(amount_).div(FixedPoint96.Q96);
         } else {
-            _value = reserve1.mul(amount_).div(reserve0);
+            _value = amount_.mul(FixedPoint96.Q96).div(getPriceX96(_pair));
         }
     }
 
     function getPrincipleTokenValue( address _pairSwap, address _pairPrinciple, uint amount_ ) external view override returns ( uint _value ) {
-        (uint reserveS0, uint reserveS1, ) = IUniswapV2Pair( _pairSwap ).getReserves();
-        (uint reserveP0, uint reserveP1, ) = IUniswapV2Pair( _pairPrinciple ).getReserves();
-
-        if ( IUniswapV2Pair( _pairSwap ).token0() == SWAP ) {
-            _value = reserveS0.mul(amount_).div(reserveS1);
+        if ( IUniswapV3Pool( _pairSwap ).token0() == SWAP ) {
+            _value = getPriceX96(_pairSwap).mul(amount_).div(FixedPoint96.Q96);
         } else {
-            _value = reserveS1.mul(amount_).div(reserveS0);
+            _value = amount_.mul(FixedPoint96.Q96).div(getPriceX96(_pairSwap));
         }
 
-        if ( IUniswapV2Pair( _pairPrinciple ).token0() == PRINCIPLE ) {
-            _value = reserveP1.mul(_value).div(reserveP0);
+        if ( IUniswapV3Pool( _pairPrinciple ).token0() == PRINCIPLE ) {
+            _value = _value.mul(FixedPoint96.Q96).div(getPriceX96(_pairPrinciple));
         } else {
-            _value = reserveP0.mul(_value).div(reserveP1);
+            _value = getPriceX96(_pairPrinciple).mul(_value).div(FixedPoint96.Q96);
         }
     }
 
     function getBondTokenValue( address _pair, uint amount_ ) external view override returns ( uint _value ) {
         if ( IUniswapV3Pool(_pair).token0() == SWAP ) {
-            _value = getPriceX96(_pair).mul(amount_);
+            _value = getPriceX96(_pair).mul(amount_).div(FixedPoint96.Q96);
         } else {
-            _value = amount_.div(getPriceX96(_pair));
+            _value = amount_.mul(FixedPoint96.Q96).div(getPriceX96(_pair));
         }
     }
 
-    function getPriceX96(address uniswapV3Pool) public view returns(uint256 priceX96) {
-        (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(uniswapV3Pool).slot0();
+    function getPriceX96(address _uniswapV3Pool) public view returns(uint256 _priceX96) {
+        (uint160 sqrtPriceX96, , , , , , ) = IUniswapV3Pool(_uniswapV3Pool).slot0();
         return UniFullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, FixedPoint96.Q96);
     }
 }

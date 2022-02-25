@@ -24,6 +24,24 @@ module.exports = {
         },
       },
       {
+        version: "0.8.2",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+      {
+        version: "0.7.5",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
+      {
         version: "0.6.12",
         settings: {
           optimizer: {
@@ -83,7 +101,7 @@ module.exports = {
       hardfork: "london",
       gasPrice: "auto",
     },
-    matic: {
+    polygon: {
       url: `https://polygon-mainnet.infura.io/v3/${process.env.INFURA_KEY}`,
       accounts: {
         mnemonic: process.env.MNEMONIC,
@@ -95,7 +113,16 @@ module.exports = {
     runOnCompile: true,
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_APIKEY,
+    apiKey: {
+      mainnet: process.env.ETHERSCAN_APIKEY,
+      ropsten: process.env.ETHERSCAN_APIKEY,
+      rinkeby: process.env.ETHERSCAN_APIKEY,
+      goerli: process.env.ETHERSCAN_APIKEY,
+      kovan: process.env.ETHERSCAN_APIKEY,
+      // polygon
+      polygon: process.env.POLYSCAN_APIKEY,
+      polygonMumbai: process.env.POLYSCAN_APIKEY,
+    },
   },
   paths: {
     sources: "./contracts",
